@@ -656,7 +656,8 @@ The following %-sequences are provided:
           (cons ?B (if state
                        (cdr (assq state battery-upower-states))
                      "unknown"))
-          (cons ?b (cond ((= level 3) "-")
+          (cons ?b (cond ((not level) "")
+                         ((= level 3) "-")
                          ((= level 4) "!")
                          (online-p "+")
                          (t "")))
