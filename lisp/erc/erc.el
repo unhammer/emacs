@@ -1583,16 +1583,29 @@ symbol, it may have these values:
   "Check whether ports A and B are equal."
   (= (erc-normalize-port a) (erc-normalize-port b)))
 
-(defun erc-generate-new-buffer-name (server port target)
+(defcustom erc-buffer-name-from-network nil
+  "If non-nil, use `erc-network' to uniquify duplicate buffer names.
+When this is non-nil, we also avoid merging buffers of different
+networks.  The value of `erc-network' is nil before connecting,
+so this only has effect on joining channels, not servers.  Has no
+effect unless `erc-reuse-buffers' is non-nil."
+  :group 'erc-buffers
+  :type 'boolean)
+
+(defun erc-generate-new-buffer-name (server port target network)
   "Create a new buffer name based on the arguments."
   (when (numberp port) (setq port (number-to-string port)))
-  (let* ((buf-name (or target
+  (let* ((buffer-name-from-network (and erc-buffer-name-from-network
+                                        network))
+         (buf-name (or target
                        (let ((name (concat server ":" port)))
                          (when (> (length name) 1)
                            name))
                        ;; This fallback should in fact never happen.
                        "*erc-server-buffer*"))
-         (full-buf-name (concat buf-name "/" server))
+         (full-buf-name (concat buf-name "/" (if buffer-name-from-network
+                                                 (symbol-name network)
+                                               server)))
          (dup-buf-name (buffer-name (car (erc-channel-list nil))))
          buffer-name)
     ;; Reuse existing buffers, but not if the buffer is a connected server
@@ -1611,10 +1624,12 @@ symbol, it may have these values:
                           (with-current-buffer (get-buffer candidate)
                             (and (erc-server-buffer-p)
                                  (not (erc-server-process-alive)))))
-                     ;; Channel buffer; check that it's from the right server.
+                     ;; Channel buffer; check that it's from the right server and network.
                      (and target
                           (with-current-buffer (get-buffer candidate)
                             (and (string= erc-session-server server)
+                                 (or (not buffer-name-from-network)
+                                     (eq (erc-network) network)) ; but erc-network will be nil if reconnecting TODO
                                  (erc-port-equal erc-session-port port))))))
             (setq buffer-name candidate)
           (when (and (not buffer-name) (get-buffer buf-name) erc-reuse-buffers)
@@ -1628,9 +1643,9 @@ symbol, it may have these values:
     ;; fallback to the old <N> uniquification method:
     (or buffer-name (generate-new-buffer-name full-buf-name))))
 
-(defun erc-get-buffer-create (server port target)
+(defun erc-get-buffer-create (server port target network)
   "Create a new buffer based on the arguments."
-  (get-buffer-create (erc-generate-new-buffer-name server port target)))
+  (get-buffer-create (erc-generate-new-buffer-name server port target network)))
 
 
 (defun erc-member-ignore-case (string list)
@@ -1990,14 +2005,17 @@ or t, which means that `auth-source' will be queried for the
 private key and the certificate.
 
 Returns the buffer for the given server or channel."
-  (let ((server-announced-name (when (and (boundp 'erc-session-server)
-                                          (string= server erc-session-server))
-                                 erc-server-announced-name))
-        (connected-p (unless connect erc-server-connected))
-        (buffer (erc-get-buffer-create server port channel))
-        (old-buffer (current-buffer))
-        old-point
-        continued-session)
+  (let* ((server-announced-name (when (and (boundp 'erc-session-server)
+                                           (string= server erc-session-server))
+                                  erc-server-announced-name))
+         (connected-p (unless connect erc-server-connected))
+         (buffer (erc-get-buffer-create server
+                                        port
+                                        channel
+                                        (when connected-p (erc-network))))
+         (old-buffer (current-buffer))
+         old-point
+         continued-session)
     (when connect (run-hook-with-args 'erc-before-connect server port nick))
     (erc-update-modules)
     (set-buffer buffer)
@@ -2324,6 +2342,7 @@ WARNING: Do not set this variable directly!  Instead, use the
 function `erc-toggle-debug-irc-protocol' to toggle its value.")
 
 (declare-function erc-network-name "erc-networks" ())
+(declare-function erc-network "erc-networks" ())
 
 (defun erc-log-irc-protocol (string &optional outbound)
   "Append STRING to the buffer *erc-protocol*.
